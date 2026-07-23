@@ -1,0 +1,207 @@
+터미널1 - 시뮬레이터
+
+cd ~/roboracer_ws
+source env.sh
+ros2 launch f1tenth_gym_ros gym_bridge_launch.py
+
+터미널2 - MPPI경로추종
+
+cd ~/roboracer_ws
+source env.sh
+ros2 launch f1tenth_mppi_nav mppi_path_follow_launch.py
+
+
+맵 바꾸는 법
+
+세 개를 한 세트로 같이 바꿔야 한다. 하나만 바꾸면 맵과 경로가 어긋난다.
+
+1) 맵  -  src/f1tenth_gym_ros/config/sim.yaml 의 map_path
+2) 시작포즈 - 같은 파일의 sx / sy / stheta
+3) 경로  -  터미널2 launch 의 path_file 인자
+
+sim.yaml 은 install 까지 심링크라 src 만 고치면 재빌드 불필요.
+반대로 launch 가 실행 시점에 이 파일을 직접 읽으므로 맵은 CLI 로 못 바꾼다. 파일을 고쳐야 한다.
+
+sim.yaml 예시 (Silverstone)
+
+    map_path: '/home/swlee/roboracer_ws/src/f1tenth_gym_ros/maps/Silverstone_map'
+    map_img_ext: '.png'
+    sx: 0.0
+    sy: 0.0
+    stheta: 0.9444
+
+sx/sy/stheta 는 쓸 경로 CSV 의 첫 줄과 같아야 한다.
+확인:  head -2 ~/roboracer_ws/paths/silverstone_track.csv
+안 맞으면 차가 엉뚱한 데서 시작해 경로로 복귀하려다 벽에 박는다.
+
+터미널2 에서 경로 지정
+
+ros2 launch f1tenth_mppi_nav mppi_path_follow_launch.py path_file:=$HOME/roboracer_ws/paths/my_206_lap.csv
+
+기본값이 silverstone_track.csv 라 Silverstone 만 인자 없이 되고 나머지는 명시해야 한다.
+
+맵 - 경로 대응표  (obstacle_short 는 short_ 로 시작. 이름 안 맞으니 주의)
+
+  Silverstone_map   ->  silverstone_track.csv
+  my_206_clean      ->  my_206_lap.csv
+  obstacle_clean    ->  obstacle_lap.csv
+  obstacle_short    ->  short_lap.csv
+
+_track / _smooth / _lap 차이
+
+  _track   원본 중심선, 점이 성김
+  _smooth  스무딩 버전, 촘촘함. 단 라인이 벽에 붙는 문제 있음
+  _lap     _smooth 에서 끝 7~8 점을 잘라낸 것. 실주행엔 이걸 쓴다
+
+_lap 이 필요한 이유: 닫힌 루프라 마지막 점이 출발점과 겹치는데
+xy_goal_tolerance 가 0.3 이라 출발하자마자 도착 판정이 나버린다.
+끝을 잘라 골을 출발점에서 0.3m 밖으로 밀어낸 것.
+Silverstone 은 트랙이 커서 끝점이 출발점에서 0.39m 떨어져 있어 이 처리가 불필요.
+
+정상 동작 확인
+
+  Sending FollowPath goal with 1178 waypoints
+  Received a goal, begin computing control effort.
+  ...
+  Reached the goal!            <- 완주 (Silverstone 약 198초)
+
+  Message Filter dropping message ... 'ego_racecar/laser'
+      시작 직후 도배되는 건 정상. TF 캐시 차기 전이라 그렇고 몇 초 뒤 멈춤
+  follow_path action server not available yet
+      controller_server 기다리는 중. 계속 뜨면 터미널1 이 안 떠 있는 것
+  Control loop missed its desired rate of 20Hz
+      Jetson 에서 가끔 뜸. 드물면 무시, 도배되면 주행이 흔들림
+
+참고: obstacle_clean / obstacle_short 는 헤어핀 곡률 문제로 아직 완주 안 됨.
+잘 도는 걸 보려면 Silverstone 이나 my_206_clean.
+
+
+==========================================================
+여기부터 실차 (시뮬레이션 아님)
+README https://github.com/lsw23101/CDSLST_roborace  7절
+==========================================================
+
+주의: 드라이버는 roboracer_ws 가 아니라 ~/f1tenth_ws 에 있다. source 를 헷갈리지 말 것.
+
+
+1) 실차 브링업  (7.1)
+
+cd ~/f1tenth_ws
+source install/setup.bash
+ros2 launch f1tenth_stack bringup_launch.py
+
+  라이다는 전원 넣고 몇 초 기다렸다가 브링업할 것.
+  부팅 전에 urg_node 가 먼저 붙으려 하면 Not Connected 가 난다.
+  차는 바퀴가 뜨게 받쳐놓고 시작. 조이패드 값이 튀면 튀어나간다.
+
+
+2) 브링업 확인
+
+ros2 node list                       노드 8개
+ros2 topic hz /scan                  40Hz 나와야 정상
+ros2 topic hz /odom                  50Hz
+ros2 run tf2_ros tf2_echo odom base_link
+
+  /odom 이 안 나오고 tf 가
+      Invalid frame ID "odom" ... frame does not exist
+  라고 뜨면 고장이 아니다.
+  vesc.yaml 의 use_servo_cmd_to_calc_angular_velocity: true 때문에
+  서보 명령을 한 번 받아야 odom 이 생긴다.
+  --> 조이패드로 조향을 좌우로 한 번 움직이면 살아난다.
+
+  라이다가 Not Connected 이고 ss -tnp | grep 10940 이 SYN-SENT 면
+  TCP 세션이 물린 것. 라이다 전원 재투입 후 브링업 재실행.
+  Hokuyo 는 세션을 하나만 허용하므로 포트를 직접 열어보지 말 것.
+
+
+3) SLAM 으로 맵 만들기  (7.2)
+
+먼저 차를 트랙에 놓는다. 상자 안이면 상자가 맵으로 찍힌다.
+브링업은 켜둔 채로 새 터미널에서
+
+cd ~/f1tenth_ws
+source install/setup.bash
+ros2 launch slam_toolbox online_async_launch.py slam_params_file:=/home/swlee/f1tenth_ws/install/f1tenth_stack/share/f1tenth_stack/config/f1tenth_online_async.yaml
+
+  slam_toolbox 는 이미 설치되어 있다 (README 의 apt install 불필요).
+  f1tenth 전용 설정 f1tenth_online_async.yaml 을 쓴다. 기본 설정보다 낫다.
+
+  경로는 반드시 위처럼 절대경로로. $(ros2 pkg prefix f1tenth_stack) 형태로 쓰면
+  치환이 안 풀려서 설정이 통째로 무시되고 slam_toolbox 가 기본값으로 돌아버린다.
+
+
+*** 주행 시작 전에 반드시 확인 ***
+
+ros2 param get /slam_toolbox base_frame
+
+  base_link      -> 정상. 주행 시작해도 된다
+  base_footprint -> 설정 안 먹은 것. 이대로 돌리면 맵이 하나도 안 만들어진다
+
+  이 차의 tf 는 odom -> base_link -> laser 다. base_footprint 프레임은 없다.
+  slam_toolbox 기본값이 base_footprint 라서, 설정 로딩이 실패하면 이 값이 된다.
+  그러면 스캔 변환이 매번 실패해서 /map 에 데이터가 단 한 개도 안 쌓인다.
+  RViz 에는 LaserScan 점만 보이므로 맵이 그려지는 것처럼 착각하기 쉽다.
+  --> 2026-07-18 에 실제로 이걸로 한 바퀴 헛돌았다.
+
+맵이 실제로 쌓이는지 확인 (주행 30초쯤 후)
+
+ros2 topic hz /map          5초에 한 번씩 나와야 정상
+ros2 run tf2_ros tf2_echo map odom
+
+  map->odom 이 계속 정확히 [0, 0, 0] 이면 스캔 매칭이 한 번도 안 돈 것이다.
+  주행했는데 보정값이 0 이면 정상일 수 없다.
+
+  주의: ros2 topic echo /map 은 QoS 가 안 맞아 아무것도 안 나온다.
+        slam_toolbox 는 transient_local 로 발행한다. hz 로 보는 게 낫다.
+
+
+RViz 는 보여주기만 하는 프로그램이다. 맵 생성과 무관하다.
+RViz 설정을 바꿔도 /map 에 데이터가 없으면 아무것도 안 보인다.
+
+또 다른 터미널에서 보면서 주행
+
+rviz2
+  Fixed Frame 을 map 으로
+  Add -> Map (/map), LaserScan (/scan)
+
+주행 요령
+  천천히. 빠르면 스캔 매칭이 깨져 맵이 겹쳐 그려진다
+  한 바퀴 돌아 출발점으로 정확히 복귀 -> 루프 클로저로 맵이 정렬됨
+  급회전 자제, 벽이 잘 보이는 라인으로
+
+
+4) 맵 저장
+
+ros2 run nav2_map_server map_saver_cli -f ~/roboracer_ws/maps/track_real
+
+  track_real.yaml + .pgm 이 나온다.
+  Silverstone_map.yaml 과 완전히 같은 포맷이라 이후 과정은 그대로 이어진다.
+
+
+이후 남은 단계
+  7.3 로컬라이제이션 - config/amcl.yaml + localization_launch.py 이미 있음. 새로 만들지 말 것
+                      단 amcl.yaml 이 laser_max_range 10.0 인데 실제 라이다는 30m. 재확인 필요
+  7.4 경로 CSV      - scripts/extract_centerline.py 또는 record_path 로 새 맵에 대해 생성
+  7.5 파라미터      - config/nav2_params_real.yaml 에 프레임/토픽만 바꿔둠
+                      속도 / MPPI 튜닝은 차가 실제로 자율주행에 들어간 다음에
+
+
+실차 하드웨어 메모
+  VESC      /dev/ttyACM0 -> /dev/sensors/vesc (udev, MODE 0666, dialout 그룹 불필요)
+  라이다     이더넷 192.168.0.10:10940  (시리얼 아님). Jetson 쪽 enP8p1s0 = 192.168.0.15
+  조이패드   DS4 블루투스 -> /dev/input/js0
+            ackermann_mux 에서 joystick priority 100, navigation 10
+            --> 조이패드가 킬스위치. 자율주행 중 조작하면 즉시 우선권을 가진다
+  wheelbase 0.25m
+  tf        odom -> base_link -> laser,  base_link->laser = [0.270, 0, 0.110]
+  
+  claude --resume
+  claude -c
+
+
+ros2 topic pub --once /initialpose geometry_msgs/msg/PoseWithCovarianceStamped "{header: {frame_id: 'map'}, pose: {pose: {position: {x: 0.0, y: 0.0, z: 0.0}, orientation: {w: 1.0}}}}"
+
+
+cd ~/roboracer_ws
+source env.sh
+ros2 run f1tenth_mppi_nav record_path --ros-args -p base_frame:=base_link -p output_file:=/home/swlee/roboracer_ws/paths/track_real_lap.csv

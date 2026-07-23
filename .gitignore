@@ -1,0 +1,20 @@
+# ROS2 빌드 산출물 (각자 colcon build 하면 생성됨)
+build/
+install/
+log/
+
+# 외부 저장소 — README 의 안내대로 각자 클론할 것
+f1tenth_gym/
+f1tenth_racetracks/
+src/f1tenth_gym_ros/
+
+# 파이썬 캐시
+__pycache__/
+*.pyc
+
+# 최상위에 굴러다니던 옛 시뮬 맵 (maps/ 아래 것만 쓴다)
+/my_206*.pgm
+/obstacle.pgm
+
+# 실행 중 생기는 로그
+mppi_run.log
