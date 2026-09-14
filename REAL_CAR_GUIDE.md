@@ -172,6 +172,53 @@ Sending FollowPath goal with 63 waypoints
 Received a goal, begin computing control effort.
 ```
 
+### 파라미터를 수정한 뒤 재실행하기
+
+`nav2_params_real.yaml`을 고쳤을 때 **터미널 4만 다시 띄우면 된다.**
+터미널 1(브링업) · 2(AMCL) · 3(RViz)는 건드리지 말 것. **AMCL을 죽이면 수렴을 처음부터 다시 잡아야 한다.**
+
+```bash
+# 터미널 4에서 Ctrl+C 후
+cd ~/roboracer_ws
+colcon build --packages-select f1tenth_mppi_nav      
+source env.sh
+ros2 launch f1tenth_mppi_nav mppi_real_launch.py 2>&1 | tee ~/roboracer_ws/mppi_run.log
+```
+
+> ⚠️ **`colcon build`가 필수다.** 이 워크스페이스는 `--symlink-install` 없이 빌드돼 있어서
+> `install/.../config/nav2_params_real.yaml`이 src의 **복사본**이다. src만 고치면 아무 일도 안 일어난다.
+>
+> 빌드를 건너뛰려면 src 경로를 직접 넘긴다:
+> ```bash
+> ros2 launch f1tenth_mppi_nav mppi_real_launch.py \
+>   params_file:=$HOME/roboracer_ws/src/f1tenth_mppi_nav/config/nav2_params_real.yaml
+> ```
+
+또한 이 런치는 `planner_server`를 띄우지 않으므로 yaml의 **`global_costmap` 섹션은 효과가 없다.**
+`local_costmap`은 `controller_server` 내부에서 돌기 때문에 터미널 4 재실행만으로 같이 반영된다.
+
+### 재실행 없이 주행 중에 바꾸기 (튜닝할 때 권장)
+
+nav2 1.1.20의 MPPI는 파라미터 대부분이 **dynamic**이고, 값이 바뀌면
+`optimizer.cpp`의 post-callback이 `reset()`을 불러 내부 버퍼까지 다시 잡는다.
+즉 주행 중에 그냥 바꿔도 먹는다.
+
+```bash
+ros2 param set /controller_server FollowPath.vx_max 0.5
+ros2 param set /controller_server FollowPath.PathAlignCritic.cost_weight 6.0
+ros2 param set /controller_server FollowPath.AckermannConstraints.min_turning_r 0.93
+ros2 param set /local_costmap/local_costmap inflation_layer.inflation_radius 0.3
+```
+
+**예외 2개는 런타임 변경이 안 된다** → yaml 수정 + 위의 재실행이 필요하다.
+
+| 항목 | 이유 |
+|---|---|
+| `controller_frequency` | `ParameterType::Static`으로 선언됨 |
+| `critics` 리스트 | critic 추가/제거는 플러그인 재로딩이 필요 |
+
+값이 잡히면 **yaml에 옮겨 적고 빌드해서 영구 반영할 것.** `param set`은 재실행하면 사라진다.
+
 ### 현재 알려진 결과
 
 트랙의 **약 60%(경로 idx 38/64)까지 자율주행에 성공**한다.

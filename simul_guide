@@ -8,72 +8,45 @@ ros2 launch f1tenth_gym_ros gym_bridge_launch.py
 
 cd ~/roboracer_ws
 source env.sh
+ros2 launch f1tenth_mppi_nav mppi_path_follow_launch.py \
+  path_file:=$HOME/roboracer_ws/raceline_opt/big_0723_raceline.csv
+
+
+
+# RPP
+ros2 launch f1tenth_mppi_nav mppi_path_follow_launch.py \
+  params_file:=$HOME/roboracer_ws/src/f1tenth_mppi_nav/config/nav2_params_rpp.yaml
+
+# DWB
+ros2 launch f1tenth_mppi_nav mppi_path_follow_launch.py \
+  params_file:=$HOME/roboracer_ws/src/f1tenth_mppi_nav/config/nav2_params_dwb.yaml
+
+# MPPI (기본값, 인자 생략)
 ros2 launch f1tenth_mppi_nav mppi_path_follow_launch.py
 
+맵·경로·controller_frequency·goal/progress checker·local_costmap은 셋 다 동일하게 뒀습니다. 컨트롤러 이름도 FollowPath로 유지해서 path_follower를 안 건드립니다. /speed_limit도 셋 다 먹습니다 — DWB는 dwb_local_planner.hpp:154에서 kinematics_handler_로 넘깁니다.
 
-맵 바꾸는 법
+실측 결과
 
-세 개를 한 세트로 같이 바꿔야 한다. 하나만 바꾸면 맵과 경로가 어긋난다.
+RPP — 로드·주행 정상. (8.81, 1.31)에서 출발해 (11.60, 7.89)까지 트랙을 크게 돌았습니다.
 
-1) 맵  -  src/f1tenth_gym_ros/config/sim.yaml 의 map_path
-2) 시작포즈 - 같은 파일의 sx / sy / stheta
-3) 경로  -  터미널2 launch 의 path_file 인자
+한 가지 중요한 발견: 원래 출발 포즈에서는 아예 못 움직입니다. RegulatedPurePursuitController detected collision ahead! 495회. 장애물 #3 (9.5, 7.5)이 출발점 정면 0.57m에 있어서입니다 — 장애물 배치할 때 말씀드렸던 그 좌표입니다. MPPI는 피해서 나가지만 RPP는 섭니다. use_collision_detection: true의 설계 그대로고, 실차 pp 설정 주석에도 "RPP는 장애물 앞에서 동일하게 뒀습니다. 컨트롤러 이름도 FollowPath로 유지해서 path_follower를 안 건드립니다. /speed_limit도 셋 다 먹습니다 — DWB는 dwb_local_planner.hpp:154에서 kinematics_handler_로 넘깁니다.
 
-sim.yaml 은 install 까지 심링크라 src 만 고치면 재빌드 불필요.
-반대로 launch 가 실행 시점에 이 파일을 직접 읽으므로 맵은 CLI 로 못 바꾼다. 파일을 고쳐야 한다.
+실측 결과
 
-sim.yaml 예시 (Silverstone)
+RPP — 로드·주행 정상. (8.81, 1.31)에서 출발해 (11.60, 7.89)까지 트랙을 크게 돌았습니다.
 
-    map_path: '/home/swlee/roboracer_ws/src/f1tenth_gym_ros/maps/Silverstone_map'
-    map_img_ext: '.png'
-    sx: 0.0
-    sy: 0.0
-    stheta: 0.9444
+한 가지 중요한 발견: 원래 출발 포즈에서는 아예 못 움직입니다. RegulatedPurePursuitController detected collision ahead! 495회. 장애물 #3 (9.5, 7.5)이 출발점 정면 0.57m에 있어서입니다 — 장애물 배치할 때 말씀드렸던 그 좌표입니다. MPPI는 피해서 나가지만 RPP는 섭니다. use_collision_detection: true의 설계 그대로고, 실차 pp 설정 주석에도 "RPP는 장애물 앞에서 정지한다(회피가 아니라)"라고 적혀 있습니다. 비교 실험의 핵심 관전 포인트가 정확히 여기입니다.
 
-sx/sy/stheta 는 쓸 경로 CSV 의 첫 줄과 같아야 한다.
-확인:  head -2 ~/roboracer_ws/paths/silverstone_track.csv
-안 맞으면 차가 엉뚱한 데서 시작해 경로로 복귀하려다 벽에 박는다.
+DWB — 크리틱 7개 전부 로드, 주행 정상. 다만 20Hz 제어주기를 계속 놓칩니다. 샘플을 800개(20×40)로 뒀더니 469회 미스가 나서, 200개(10×20)로 줄이고 granularity를 거칠게(0.1 / 0.05), sim_time을 1.2로 낮춰 209회까지 내렸습니다. 그래도 사이클의 30% 수준입니다. No valid trajectories out of 210 도 간헐적으로 뜹니다. 더 낮추려면 샘플을 더 줄이거나 DWB만 controller_frequency를 10Hz로 내려야 하는데, 후자는 MPPI와의 조건이 어긋납니다.
 
-터미널2 에서 경로 지정
+DWB의 구조적 한계 (설정 파일 주석에도 적어뒀습니다)
 
-ros2 launch f1tenth_mppi_nav mppi_path_follow_launch.py path_file:=$HOME/roboracer_ws/paths/my_206_lap.csv
+DWB는 차동구동용이라 (v, ω)를 격자로 독립 샘플링할 뿐, v/ω ≥ 최소회전반경이라는 애커만 구속을 표현하는 항이 없습니다. MPPI의 AckermannConstraints.min_turning_r에 대응하는 게 없습니다. max_vel_theta는 최고속 등가값(2.5/0.69 = 3.6)으로 잡았지만 저속 샘플에서는 여전히 불가능한 조합이 나오고, 그 명령은 cmd_vel_to_ackermann이 조향 한계 0.4189 rad에서 잘라버려 차가 명령보다 덜 돕니다. min_vel_x는 0.3으로 뒀습니다 — 0이면 제자리 회전 궤적을 뽑는데 애커만 차는 실행할 수 없습니다.
 
-기본값이 silverstone_track.csv 라 Silverstone 만 인자 없이 되고 나머지는 명시해야 한다.
+세 컨트롤러 비교표를 만드시려면 이 괴리 자체가 결과의 일부입니다.
 
-맵 - 경로 대응표  (obstacle_short 는 short_ 로 시작. 이름 안 맞으니 주의)
-
-  Silverstone_map   ->  silverstone_track.csv
-  my_206_clean      ->  my_206_lap.csv
-  obstacle_clean    ->  obstacle_lap.csv
-  obstacle_short    ->  short_lap.csv
-
-_track / _smooth / _lap 차이
-
-  _track   원본 중심선, 점이 성김
-  _smooth  스무딩 버전, 촘촘함. 단 라인이 벽에 붙는 문제 있음
-  _lap     _smooth 에서 끝 7~8 점을 잘라낸 것. 실주행엔 이걸 쓴다
-
-_lap 이 필요한 이유: 닫힌 루프라 마지막 점이 출발점과 겹치는데
-xy_goal_tolerance 가 0.3 이라 출발하자마자 도착 판정이 나버린다.
-끝을 잘라 골을 출발점에서 0.3m 밖으로 밀어낸 것.
-Silverstone 은 트랙이 커서 끝점이 출발점에서 0.39m 떨어져 있어 이 처리가 불필요.
-
-정상 동작 확인
-
-  Sending FollowPath goal with 1178 waypoints
-  Received a goal, begin computing control effort.
-  ...
-  Reached the goal!            <- 완주 (Silverstone 약 198초)
-
-  Message Filter dropping message ... 'ego_racecar/laser'
-      시작 직후 도배되는 건 정상. TF 캐시 차기 전이라 그렇고 몇 초 뒤 멈춤
-  follow_path action server not available yet
-      controller_server 기다리는 중. 계속 뜨면 터미널1 이 안 떠 있는 것
-  Control loop missed its desired rate of 20Hz
-      Jetson 에서 가끔 뜸. 드물면 무시, 도배되면 주행이 흔들림
-
-참고: obstacle_clean / obstacle_short 는 헤어핀 곡률 문제로 아직 완주 안 됨.
-잘 도는 걸 보려면 Silverstone 이나 my_206_clean.
+tools/run_comparison.sh obs 3 120
 
 
 ==========================================================

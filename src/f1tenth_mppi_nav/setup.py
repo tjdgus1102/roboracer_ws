@@ -28,6 +28,8 @@ setup(
             'goal_pose_relay = f1tenth_mppi_nav.goal_pose_relay:main',
             'record_path = f1tenth_mppi_nav.record_path:main',
             'path_follower = f1tenth_mppi_nav.path_follower:main',
+            'speed_profile = f1tenth_mppi_nav.speed_profile:main',
+            'record_lap = f1tenth_mppi_nav.record_lap:main',
         ],
     },
 )

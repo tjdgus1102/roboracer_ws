@@ -1,0 +1,119 @@
+# Pure Pursuit 대조군 설정 (MPPI 비교 실험용).
+#
+# nav2_params_real.yaml 은 건드리지 않는다. mppi_real_launch.py 도 그대로 쓴다
+# (params_file 인자로 이 파일을 넘기면 controller_server 만 바뀐다).
+#
+# 컨트롤러 이름을 일부러 "FollowPath" 로 유지한다: path_follower 의
+# controller_id 기본값이 FollowPath 라서, 이름을 맞춰 두면 런치 파일에
+# controller_id 인자를 새로 뚫을 필요가 없다. 알고리즘을 고르는 건 이름이
+# 아니라 plugin: 줄이다.
+#
+# 실험 목적상 controller_frequency, goal/progress checker, local_costmap 은
+# nav2_params_real.yaml 과 동일하게 맞춰 둔다. 다른 게 컨트롤러 하나뿐이어야
+# 비교가 성립한다.
+
+controller_server:
+  ros__parameters:
+    use_sim_time: False
+    controller_frequency: 20.0
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.5
+    min_theta_velocity_threshold: 0.001
+    failure_tolerance: 0.3
+    odom_topic: /odom
+    progress_checker_plugin: "progress_checker"
+    goal_checker_plugins: ["general_goal_checker"]
+    controller_plugins: ["FollowPath"]
+
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.5
+      movement_time_allowance: 10.0
+    general_goal_checker:
+      stateful: True
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.3
+      yaw_goal_tolerance: 0.3
+
+    FollowPath:
+      plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
+
+      # speed_profile 노드가 /speed_limit 으로 이 값을 런타임에 덮어쓴다.
+      # RPP 도 setSpeedLimit 을 구현하고 있으므로 MPPI 와 똑같이 동작한다
+      # (percentage=False 로 발행하므로 절대값으로 치환된다).
+      # 상한 기준을 맞춰야 비교가 되므로 MPPI 의 vx_max 와 같은 3.0 으로 둔다.
+      desired_linear_vel: 5.0
+
+      # 전방주시거리. 속도 비례로 잡되 위아래를 묶는다.
+      # 3.0 m/s * 0.5 s = 1.5 m 이므로 사실상 직선에서 max 에 붙는다.
+      use_velocity_scaled_lookahead_dist: true
+      lookahead_time: 0.5
+      lookahead_dist: 0.9
+      min_lookahead_dist: 0.4
+      max_lookahead_dist: 2.5
+
+      # 곡률 기반 감속. raceline 의 최소 반경이 0.929 m 이므로 그 언저리를
+      # 임계로 잡으면 코너에서만 물린다.
+      use_regulated_linear_velocity_scaling: true
+      regulated_linear_scaling_min_radius: 0.9
+      regulated_linear_scaling_min_speed: 0.5
+      # 비용맵 비용으로도 감속시키는 옵션은 끈다. 켜면 "장애물 때문에 느려진
+      # 것"과 "곡률 때문에 느려진 것"이 섞여서 MPPI 와의 비교가 흐려진다.
+      use_cost_regulated_linear_velocity_scaling: false
+
+      # 🔴 애커만 차량은 제자리 회전이 불가능하다. 반드시 false.
+      use_rotate_to_heading: false
+      allow_reversing: false
+
+      # 충돌 검사. true 면 RPP 는 장애물 앞에서 "정지"한다 (회피가 아니라).
+      # MPPI 와의 대조 포인트가 정확히 여기다 -- 비교 실험에서는 켜 두는 게
+      # 맞다. 끄면 그냥 들이받는다.
+      use_collision_detection: true
+      max_allowed_time_to_collision_up_to_carrot: 1.0
+
+      use_interpolation: true
+      transform_tolerance: 0.2
+      # path_follower 가 10 m 짜리 윈도우를 보내므로 최근접점 탐색 범위는
+      # 그 안쪽이면 된다. local_costmap 반폭과 맞춰 7.0.
+      max_robot_pose_search_dist: 7.0
+
+      min_approach_linear_velocity: 0.3
+      approach_velocity_scaling_dist: 0.6
+      max_angular_accel: 3.2
+      rotate_to_heading_angular_vel: 1.0
+      rotate_to_heading_min_angle: 0.785
+
+# nav2_params_real.yaml 과 동일. 컨트롤러만 다르게 두기 위해 그대로 복제한다.
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      use_sim_time: False
+      update_frequency: 10.0
+      publish_frequency: 5.0
+      global_frame: map
+      robot_base_frame: base_link
+      rolling_window: true
+      width: 14
+      height: 14
+      resolution: 0.05
+      robot_radius: 0.22
+      plugins: ["obstacle_layer", "inflation_layer"]
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.55
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        observation_sources: scan
+        scan:
+          topic: /scan
+          max_obstacle_height: 2.0
+          clearing: True
+          marking: True
+          data_type: "LaserScan"
+          raytrace_max_range: 8.0
+          raytrace_min_range: 0.0
+          obstacle_max_range: 7.0
+          obstacle_min_range: 0.0
+      always_send_full_costmap: True

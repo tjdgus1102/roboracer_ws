@@ -18,12 +18,14 @@ class CmdVelToAckermann(Node):
         self.declare_parameter('wheelbase', 0.3302)
         self.declare_parameter('max_steering_angle', 0.4189)
         self.declare_parameter('min_speed_for_steering', 0.05)
+        self.declare_parameter('invert_speed', False)
         self.declare_parameter('cmd_vel_topic', '/cmd_vel')
         self.declare_parameter('drive_topic', '/drive')
 
         self.wheelbase = self.get_parameter('wheelbase').value
         self.max_steer = self.get_parameter('max_steering_angle').value
         self.min_speed = self.get_parameter('min_speed_for_steering').value
+        self.invert_speed = self.get_parameter('invert_speed').value
 
         cmd_vel_topic = self.get_parameter('cmd_vel_topic').value
         drive_topic = self.get_parameter('drive_topic').value
@@ -40,12 +42,13 @@ class CmdVelToAckermann(Node):
 
         out = AckermannDriveStamped()
         out.header.stamp = self.get_clock().now().to_msg()
-        # This car's motor is wired opposite to the VESC convention, so a
-        # positive drive.speed command makes it reverse. Only the command
-        # path is flipped: vesc_to_odom shares speed_to_erpm_gain, so
+        # The real car's motor is wired opposite to the VESC convention, so
+        # there a positive drive.speed command makes it reverse. Only the
+        # command path is flipped: vesc_to_odom shares speed_to_erpm_gain, so
         # negating that parameter instead would also invert /odom, which
-        # already reports forward motion as positive.
-        out.drive.speed = -speed
+        # already reports forward motion as positive. The simulator has no
+        # such quirk, hence the parameter rather than a hard-coded sign.
+        out.drive.speed = -speed if self.invert_speed else speed
         out.drive.steering_angle = steering_angle
         self.pub.publish(out)
 

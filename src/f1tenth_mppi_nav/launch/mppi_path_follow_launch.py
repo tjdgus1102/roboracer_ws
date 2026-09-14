@@ -5,19 +5,24 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
     pkg_share = get_package_share_directory('f1tenth_mppi_nav')
     default_params = os.path.join(pkg_share, 'config', 'nav2_params.yaml')
-    default_path = os.path.expanduser('~/roboracer_ws/paths/silverstone_track.csv')
+    default_path = os.path.expanduser('~/roboracer_ws/raceline_opt/big_0723_raceline.csv')
 
     path_file_arg = DeclareLaunchArgument('path_file', default_value=default_path)
     params_file_arg = DeclareLaunchArgument('params_file', default_value=default_params)
+    # Lap until Ctrl+C. continuous:=false restores the old
+    # drive-one-lap-and-stop behaviour.
+    continuous_arg = DeclareLaunchArgument('continuous', default_value='true')
 
     return LaunchDescription([
         path_file_arg,
         params_file_arg,
+        continuous_arg,
         Node(
             package='nav2_controller',
             executable='controller_server',
@@ -47,6 +52,22 @@ def generate_launch_description():
             executable='path_follower',
             name='path_follower',
             output='screen',
-            parameters=[{'path_file': LaunchConfiguration('path_file')}],
+            parameters=[{
+                'path_file': LaunchConfiguration('path_file'),
+                # LaunchConfiguration is a string; 'continuous' is declared bool
+                'continuous': ParameterValue(
+                    LaunchConfiguration('continuous'), value_type=bool),
+                'base_frame': 'ego_racecar/base_link',
+            }],
+        ),
+        Node(
+            package='f1tenth_mppi_nav',
+            executable='speed_profile',
+            name='speed_profile',
+            output='screen',
+            parameters=[{
+                'path_file': LaunchConfiguration('path_file'),
+                'base_frame': 'ego_racecar/base_link',
+            }],
         ),
     ])

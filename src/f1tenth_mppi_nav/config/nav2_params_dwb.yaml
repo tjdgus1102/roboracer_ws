@@ -1,0 +1,129 @@
+# DWB (Dynamic Window) 시뮬 설정 -- MPPI 대조군.
+#
+# 실행:
+#   ros2 launch f1tenth_mppi_nav mppi_path_follow_launch.py \
+#     params_file:=$HOME/roboracer_ws/src/f1tenth_mppi_nav/config/nav2_params_dwb.yaml
+#
+# 비교가 성립하려면 컨트롤러 하나만 달라야 하므로 controller_frequency,
+# goal/progress checker, local_costmap 은 nav2_params.yaml 과 동일하게 둔다.
+# 컨트롤러 이름도 "FollowPath" 로 유지한다 (path_follower 의 controller_id 기본값).
+#
+# *** DWB 는 차동구동(diff drive)용이다. 애커만에 얹을 때의 한계 ***
+# DWB 는 (v, w) 를 격자로 독립 샘플링할 뿐 v/w <= 최소회전반경 이라는
+# 애커만 구속을 표현하지 못한다. MPPI 의 AckermannConstraints.min_turning_r
+# 에 대응하는 항이 없다. 아래 max_vel_theta 는 최고속에서의 등가값
+# (max_vel_x / 0.69 = 3.6) 으로 잡았지만, 저속 샘플에서는 여전히 물리적으로
+# 불가능한 조합이 생성된다. 그 명령은 cmd_vel_to_ackermann 이
+# atan(L*w/v) 로 바꾼 뒤 조향 한계 0.4189 rad 에서 잘리므로, 차는 명령보다
+# 덜 돈다. 이 괴리 자체가 세 컨트롤러 비교의 관전 포인트다.
+#
+# min_vel_x 를 0 으로 두지 말 것. 0 이면 제자리 회전 궤적을 뽑는데
+# 애커만 차는 그걸 실행할 수 없고, cmd_vel_to_ackermann 도
+# min_speed_for_steering(0.05) 미만에서는 조향을 0 으로 낸다.
+
+controller_server:
+  ros__parameters:
+    use_sim_time: False
+    controller_frequency: 20.0
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.5
+    min_theta_velocity_threshold: 0.001
+    failure_tolerance: 0.3
+    odom_topic: /ego_racecar/odom
+    progress_checker_plugin: "progress_checker"
+    goal_checker_plugins: ["general_goal_checker"]
+    controller_plugins: ["FollowPath"]
+
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.5
+      movement_time_allowance: 10.0
+    general_goal_checker:
+      stateful: True
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.3
+      yaw_goal_tolerance: 0.3
+
+    FollowPath:
+      plugin: "dwb_core::DWBLocalPlanner"
+
+      # 속도/가속 한계. max_vel_x 는 MPPI 의 vx_max 와 같은 2.5.
+      # speed_profile 노드가 /speed_limit 으로 이 값을 런타임에 덮어쓴다
+      # (DWBLocalPlanner::setSpeedLimit -> kinematics_handler_).
+      min_vel_x: 0.3
+      max_vel_x: 2.5
+      min_vel_y: 0.0
+      max_vel_y: 0.0
+      min_speed_xy: 0.3
+      max_speed_xy: 2.5
+      min_speed_theta: 0.0
+      max_vel_theta: 3.6
+      acc_lim_x: 3.0
+      acc_lim_y: 0.0
+      acc_lim_theta: 3.2
+      decel_lim_x: -3.0
+      decel_lim_y: 0.0
+      decel_lim_theta: -3.2
+
+      # 궤적 샘플링. 애커만은 조향이 곧 w 라 vtheta 쪽을 더 준다.
+      # 20x40=800 개로 뒀더니 Jetson 에서 20Hz 제어주기를 매 사이클 놓쳤다
+      # ("Control loop missed its desired rate"). 10x20=200 이면 따라온다.
+      vx_samples: 10
+      vy_samples: 1
+      vtheta_samples: 20
+      sim_time: 1.2
+      linear_granularity: 0.1
+      angular_granularity: 0.05
+      transform_tolerance: 0.2
+      xy_goal_tolerance: 0.3
+      trans_stopped_velocity: 0.25
+      short_circuit_trajectory_evaluation: True
+      stateful: True
+
+      # nav2 기본 크리틱 조합과 기본 가중치. 튜닝하지 않은 출발점이다.
+      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
+      BaseObstacle.scale: 0.02
+      PathAlign.scale: 32.0
+      PathAlign.forward_point_distance: 0.1
+      GoalAlign.scale: 24.0
+      GoalAlign.forward_point_distance: 0.1
+      PathDist.scale: 32.0
+      GoalDist.scale: 24.0
+      RotateToGoal.scale: 32.0
+      RotateToGoal.slowing_factor: 5.0
+      RotateToGoal.lookahead_time: -1.0
+
+# nav2_params.yaml 과 동일. 컨트롤러만 다르게 두기 위해 그대로 복제한다.
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      use_sim_time: False
+      update_frequency: 10.0
+      publish_frequency: 5.0
+      global_frame: map
+      robot_base_frame: ego_racecar/base_link
+      rolling_window: true
+      width: 14
+      height: 14
+      resolution: 0.05
+      robot_radius: 0.22
+      plugins: ["obstacle_layer", "inflation_layer"]
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.55
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        observation_sources: scan
+        scan:
+          topic: /scan
+          max_obstacle_height: 2.0
+          clearing: True
+          marking: True
+          data_type: "LaserScan"
+          raytrace_max_range: 8.0
+          raytrace_min_range: 0.0
+          obstacle_max_range: 7.0
+          obstacle_min_range: 0.0
+      always_send_full_costmap: True

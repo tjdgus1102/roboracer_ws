@@ -81,25 +81,36 @@ controller_server:
 
     FollowPath:
       plugin: "nav2_mppi_controller::MPPIController"
-      time_steps: 56
+      time_steps: 40
       model_dt: 0.05
       batch_size: 2000
-      vx_std: 0.6
+      vx_std: 0.2
       vy_std: 0.0
-      wz_std: 0.6
-      vx_max: 6.0
-      vx_min: 0.0
+      wz_std: 0.4
+      # Ceiling only. The speed_profile node rewrites this at 50 Hz over
+      # /speed_limit with the TUM profile speed for wherever the car is on the
+      # raceline, so this must stay equal to V_MAX in convert_and_plot.py --
+      # nav2 scales wz and vx_min by (speed_limit / vx_max) alongside it.
+      vx_max: 2.5
+      vx_min: -0.5
       vy_max: 0.0
-      wz_max: 1.8
+      # Holding the raceline needs wz = v*|kappa|, and setSpeedLimit scales
+      # this cap by v/vx_max, so v cancels: the binding condition is just
+      # wz_max >= vx_max * |kappa|max = 3.0 * 1.104 = 3.31 for big_0723.
+      # At 1.6 the tightest corner was unreachable (needs 2.35 rad/s) whether
+      # or not a speed limit was published. Re-check this when raising vx_max.
+      # Not a grip risk: 1.104 1/m is 0.327 rad of steer (limit 0.4189) and
+      # AckermannConstraints.min_turning_r still caps wz at v/0.69 on top.
+      wz_max: 3.5
       iteration_count: 1
-      prune_distance: 6.0
+      prune_distance: 5.5
       transform_tolerance: 0.2
       temperature: 0.3
       gamma: 0.015
       motion_model: "Ackermann"
       visualize: true
       AckermannConstraints:
-        min_turning_r: 0.75
+        min_turning_r: 0.69
       TrajectoryVisualizer:
         trajectory_step: 5
         time_step: 3
@@ -109,42 +120,45 @@ controller_server:
         cost_power: 1
         cost_weight: 4.0
       GoalCritic:
-        enabled: true
+        enabled: false
         cost_power: 1
         cost_weight: 5.0
         threshold_to_consider: 1.4
       GoalAngleCritic:
-        enabled: true
+        enabled: false
         cost_power: 1
         cost_weight: 3.0
         threshold_to_consider: 0.5
       PreferForwardCritic:
         enabled: true
         cost_power: 1
-        cost_weight: 5.0
+        cost_weight: 1.0
         threshold_to_consider: 0.5
       CostCritic:
         enabled: true
         cost_power: 1
-        cost_weight: 6.0
-        critical_cost: 300.0
-        consider_footprint: false
-        collision_cost: 1000000.0
+        # Divided by 254 internally before use, because it multiplies a raw
+        # costmap cost (0-254); that brings the product into the same regime as
+        # the other critics' scores. The number written HERE is therefore
+        # pre-normalization -- do not compare it to PathAlignCritic's 14.0.
+        # Tune it relative to 3.81, which is the nav2 default. Higher = avoid
+        # obstacles harder at the expense of following the raceline.
+        cost_weight: 3.81
         near_goal_distance: 1.0
       PathAlignCritic:
         enabled: true
         cost_power: 1
-        cost_weight: 14.0
+        cost_weight: 7.5
         max_path_occupancy_ratio: 0.05
-        trajectory_point_step: 3
+        trajectory_point_step: 4
         threshold_to_consider: 0.5
         offset_from_furthest: 20
         use_path_orientations: false
       PathFollowCritic:
         enabled: true
         cost_power: 1
-        cost_weight: 5.0
-        offset_from_furthest: 5
+        cost_weight: 15.00
+        offset_from_furthest: 12
         threshold_to_consider: 1.4
       PathAngleCritic:
         enabled: true
@@ -153,7 +167,7 @@ controller_server:
         offset_from_furthest: 4
         threshold_to_consider: 0.5
         max_angle_to_furthest: 1.0
-        forward_preference: true
+        forward_preference: false
 
 local_costmap:
   local_costmap:
@@ -167,7 +181,19 @@ local_costmap:
       width: 14
       height: 14
       resolution: 0.05
-      robot_radius: 0.33
+      # CostCritic treats cost 253 (= within this radius of a wall) as a hard
+      # collision and throws the whole rollout away at 1e6, so this radius is
+      # the band the car physically cannot enter. At 0.33 that killed the
+      # raceline's tightest apexes outright -- min clearance on big_0723 is
+      # 0.292 m and 4.4% of the line sat inside the band. 0.22 clears the
+      # tightest apex by 7.2 cm while still covering the 0.15 m half-width that
+      # extract_track_widths.py assumes, plus 7 cm.
+      # Note base_link is at the REAR AXLE (bringup_launch.py puts laser at
+      # x=+0.27, wheelbase 0.307), so the front bumper sits at x~0.40 and no
+      # circle under r=0.43 ever covered it -- 0.33 bought no longitudinal
+      # protection, only a lateral penalty. Switch to a footprint polygon if
+      # front-end clearance ever needs to be real.
+      robot_radius: 0.22
       plugins: ["obstacle_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
